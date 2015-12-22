@@ -135,9 +135,12 @@ transaction(_Conn, TransactionFun) ->
 find(Conn, Id) when is_list(Id) ->
     {Type, Collection, MongoId} = infer_type_from_id(Id),
 
+
+
     Res = execute(Conn, fun() ->
 				mongo:find_one(Collection, {'_id', MongoId})
 			end),
+    %io:format("FIND ~w", [Res]),
     case Res of
         {ok, {}}			-> undefined;
         {ok, {Doc}}			-> mongo_tuple_to_record(Type, Doc);
@@ -156,6 +159,7 @@ find(Conn, Type, Conditions, Max, Skip, Sort, SortOrder) when is_atom(Type),
             Collection = type_to_collection(Type),
             Res = execute_find(Conn, Conditions, Max, Skip, Sort, SortOrder,
 			       Collection),
+            io:format("FIND ~w ~n", [Res]),
             case Res of
                 {ok, Curs} ->
                     lists:map(fun(Row) ->
@@ -170,6 +174,7 @@ find(Conn, Type, Conditions, Max, Skip, Sort, SortOrder) when is_atom(Type),
 execute_find(Conn, Conditions, Max, Skip, Sort, SortOrder,
 	     Collection) ->
     execute(Conn, fun() ->
+        io:format("EXECUTE FIND ~n"),
 			  Selector = build_conditions(Conditions, {Sort, pack_sort_order(SortOrder)}),
 			  case Max of
 			      all -> mongo:find(Collection, Selector, [], Skip);
@@ -474,21 +479,29 @@ type_to_collection_name(Type) when is_list(Type) ->
 
 % Convert a tuple return by the MongoDB driver to a Boss record
 mongo_tuple_to_record(Type, Row) ->
+
     MongoDoc		= tuple_to_proplist(Row),
     AttributeTypes	= boss_record_lib:attribute_types(Type),
     AttributeNames	= boss_record_lib:attribute_names(Type),
+ %   io:format("MTTR Type ~p ~n", [Type]),
+  %  io:format("MongoDoc ~p ~n", [MongoDoc]),
+ %   io:format("MTTR AttributeTypes ~p ~n", [AttributeTypes]),
+   % io:format("MTTR AttributeNames ~p ~n", [AttributeNames]),
     Args                = mongo_make_args(Type, MongoDoc, AttributeTypes,
 					  AttributeNames),
+
+ %   io:format("MTTR Args ~p ~n", [Args]),
     apply(Type, new, Args).
 
 
 mongo_make_args(Type, MongoDoc, AttributeTypes, AttributeNames) ->
     lists:map(fun
 		  (id) ->
-		      MongoValue = attr_value(id, MongoDoc),
+		      MongoValue = attr_value(<<"_id">>, MongoDoc),
+          %io:format("MongoValue ~p", [MongoValue]),
 		      unpack_id(Type, MongoValue);
 		  (AttrName) ->
-		      MongoValue = attr_value(AttrName, MongoDoc),
+		      MongoValue = attr_value(list_to_binary(atom_to_list(AttrName)), MongoDoc),
 		      ValueType = proplists:get_value(AttrName, AttributeTypes),
 		      unpack_value(AttrName, MongoValue, ValueType)
 	      end,
@@ -532,7 +545,15 @@ pack_id(BossId) ->
 unpack_id(_Type, undefined) ->
     undefined;
 unpack_id(Type, MongoId) ->
-    lists:concat([Type, "-", binary_to_list(dec2hex(element(1, MongoId)))]).
+ %   io:format("Unoack id ~p ~p ~n",[MongoId,Type]),
+    lists:concat(
+        [Type, "-",
+            binary_to_list(
+                dec2hex(
+                    element(1, MongoId)
+                )
+            )
+        ]).
 
 
 % Value conversions
@@ -550,10 +571,13 @@ unpack_value(_AttrName, [H|T], _ValueType) when is_integer(H) ->
 unpack_value(_AttrName, {_, _, _} = Value, datetime) ->
     calendar:now_to_datetime(Value);
 unpack_value(AttrName, Value, ValueType) ->
+    %io:format("UNOACK VALUE ~p ~p ~n", [AttrName, Value ]),
     case is_id_attr(AttrName) and (Value =/= "") of
         true ->
             IdType = id_type_from_foreign_key(AttrName),
-            unpack_id(IdType, Value);
+            lists:concat(
+                [IdType, "-",integer_to_list(Value)]);
+           % unpack_id(IdType, {list_to_binary(integer_to_list(Value))});
         false ->
             boss_record_lib:convert_value_to_type(Value, ValueType)
     end.
